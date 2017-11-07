@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel.DataAnnotations;
 using System.Net;
 using System.Net.Http;
 using System.Threading.Tasks;
@@ -95,6 +96,46 @@ namespace Tests
 
             Assert.IsInstanceOfType(lastError, typeof(BrokenCircuitException));
             Assert.IsTrue(policy.CircuitState == CircuitState.Open);
+        }
+
+        [TestMethod]
+        public async Task Retry_And_Circuit_Breaker()
+        {
+            int callCount = 0;
+
+            var cbPolicy = Policy
+                .Handle<HttpRequestException>()
+                .CircuitBreakerAsync(2, TimeSpan.FromSeconds(60));
+
+            var retryPolicy = Policy
+                .Handle<Exception>()
+                .RetryAsync(6);
+
+            var combined = Policy.Wrap(retryPolicy, cbPolicy);
+
+            Exception lastError = null;
+            for (int i = 0; i < 3; i++)
+            {
+                try
+                {
+                    await combined.ExecuteAsync(async () =>
+                    {
+                        callCount++;
+                        var resp = await HttpClient.GetAsync(
+                            "http://localhost:13000/api/values/GetStatusCode?statusCode=500");
+                        resp.EnsureSuccessStatusCode(); //check and throw
+                        return resp;
+                    });
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                }
+            }
+
+            Assert.IsInstanceOfType(lastError, typeof(BrokenCircuitException));
+            Assert.IsTrue(cbPolicy.CircuitState == CircuitState.Open);
+            Assert.AreEqual(2, callCount);
         }
 
         [TestMethod]
