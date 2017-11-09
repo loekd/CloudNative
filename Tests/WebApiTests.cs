@@ -139,6 +139,46 @@ namespace Tests
         }
 
         [TestMethod]
+        public async Task Retry_And_Circuit_Breaker2()
+        {
+            int callCount = 0;
+
+            var cbPolicy = Policy
+                .Handle<HttpRequestException>()
+                .CircuitBreakerAsync(2, TimeSpan.FromSeconds(60));
+
+            var retryPolicy = Policy
+                .Handle<Exception>()
+                .RetryAsync(6);
+
+            var combined = Policy.Wrap(cbPolicy, retryPolicy);
+
+            Exception lastError = null;
+            for (int i = 0; i < 10; i++)
+            {
+                try
+                {
+                    await combined.ExecuteAsync(async () =>
+                    {
+                        callCount++;
+                        var resp = await HttpClient.GetAsync(
+                            "http://localhost:13000/api/values/GetStatusCode?statusCode=500");
+                        resp.EnsureSuccessStatusCode(); //check and throw
+                        return resp;
+                    });
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                }
+            }
+
+            Assert.IsInstanceOfType(lastError, typeof(BrokenCircuitException));
+            Assert.IsTrue(cbPolicy.CircuitState == CircuitState.Open);
+            Assert.AreEqual(14, callCount);
+        }
+
+        [TestMethod]
         public void Circuit_Breaker_IsolateAndReset()
         {
             var policy = Policy
